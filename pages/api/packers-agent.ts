@@ -1,6 +1,131 @@
 // pages/api/packers-agent.ts
+// Secure API endpoint with rate limiting and input validation
+// Protects against abuse and reduces API costs by removing expensive fallback retry
+
 import type { NextApiRequest, NextApiResponse } from "next";
 import Ajv from "ajv";
+
+// ============================================================================
+// RATE LIMITING (In-Memory)
+// ============================================================================
+
+interface RateLimitEntry {
+  count: number;
+  resetAt: number;
+  hourlyCount: number;
+  hourlyResetAt: number;
+}
+
+const rateLimitStore = new Map<string, RateLimitEntry>();
+
+// Rate limits: 10 requests per minute, 100 per hour per IP
+const RATE_LIMIT_PER_MINUTE = 10;
+const RATE_LIMIT_PER_HOUR = 100;
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+function getClientIP(req: NextApiRequest): string {
+  // Check various headers for IP (handles proxies/load balancers)
+  const forwarded = req.headers["x-forwarded-for"];
+  const realIP = req.headers["x-real-ip"];
+  const remoteAddress = req.socket.remoteAddress;
+
+  if (typeof forwarded === "string") {
+    return forwarded.split(",")[0].trim();
+  }
+  if (typeof realIP === "string") {
+    return realIP;
+  }
+  return remoteAddress || "unknown";
+}
+
+function checkRateLimit(ip: string): { allowed: boolean; retryAfter?: number } {
+  const now = Date.now();
+  let entry = rateLimitStore.get(ip);
+
+  if (!entry) {
+    entry = {
+      count: 1,
+      resetAt: now + MINUTE_MS,
+      hourlyCount: 1,
+      hourlyResetAt: now + HOUR_MS,
+    };
+    rateLimitStore.set(ip, entry);
+    return { allowed: true };
+  }
+
+  // Clean up old entries periodically (every 1000 requests)
+  if (Math.random() < 0.001) {
+    for (const [key, val] of rateLimitStore.entries()) {
+      if (val.hourlyResetAt < now) {
+        rateLimitStore.delete(key);
+      }
+    }
+  }
+
+  // Check minute limit
+  if (entry.resetAt < now) {
+    entry.count = 1;
+    entry.resetAt = now + MINUTE_MS;
+  } else {
+    entry.count++;
+  }
+
+  // Check hour limit
+  if (entry.hourlyResetAt < now) {
+    entry.hourlyCount = 1;
+    entry.hourlyResetAt = now + HOUR_MS;
+  } else {
+    entry.hourlyCount++;
+  }
+
+  // Enforce limits
+  if (entry.count > RATE_LIMIT_PER_MINUTE) {
+    const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+    return { allowed: false, retryAfter };
+  }
+
+  if (entry.hourlyCount > RATE_LIMIT_PER_HOUR) {
+    const retryAfter = Math.ceil((entry.hourlyResetAt - now) / 1000);
+    return { allowed: false, retryAfter };
+  }
+
+  return { allowed: true };
+}
+
+// ============================================================================
+// INPUT VALIDATION
+// ============================================================================
+
+const MAX_MESSAGE_LENGTH = 500; // Match frontend limit
+const MAX_REQUEST_SIZE = 10 * 1024; // 10KB max request body
+
+function validateInput(message: any, mode: any): { valid: boolean; error?: string } {
+  // Message validation
+  if (!message || typeof message !== "string") {
+    return { valid: false, error: "Request must include `message` string in body" };
+  }
+
+  if (message.length === 0) {
+    return { valid: false, error: "Message cannot be empty" };
+  }
+
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    return { valid: false, error: `Message exceeds maximum length of ${MAX_MESSAGE_LENGTH} characters` };
+  }
+
+  // Mode validation (whitelist)
+  const validModes = ["Balanced", "Zen", "Dramatic", "Angry", "Copium", "Analyst", "Petty"];
+  if (mode !== undefined && mode !== null && !validModes.includes(mode)) {
+    return { valid: false, error: `Invalid mode. Must be one of: ${validModes.join(", ")}` };
+  }
+
+  return { valid: true };
+}
+
+// ============================================================================
+// ORIGINAL CODE (with fallback retry removed to save costs)
+// ============================================================================
 
 const SYSTEM_PROMPT = `You are "Packers Emotional Support Agent" — an AI agent that provides emotional validation, short tactical analysis, fan-specific humor, and an optimistic close-out for Green Bay Packers fans after frustrating or confusing moments in a game.
 You are an expert in Packers football and have a deep understanding of the team and its players. 
@@ -38,7 +163,6 @@ Constraints:
 Output: Only the JSON object, nothing else.
 `;
 
-// Few-shot example assistant content (keeps the model guided)
 const FEW_SHOT_EXAMPLES = [
   {
     role: "user",
@@ -55,12 +179,11 @@ const FEW_SHOT_EXAMPLES = [
         "Not all doom — Love and the offense can exploit man matchups next drive, and LaFleur likes to attack those seams.",
       humor: "Deep breath — at least the Bears still exist to make us feel superior.",
       fan_ritual: "Take three slow breaths, then put on your favorite Packers hoodie.",
-      closing: "We’ll bounce back — it stings, but we’ll be watching the W next week."
+      closing: "We'll bounce back — it stings, but we'll be watching the W next week."
     })
   }
 ];
 
-// Output schema for AJV
 const OUTPUT_SCHEMA = {
   type: "object",
   properties: {
@@ -87,7 +210,6 @@ const OUTPUT_SCHEMA = {
 const ajv = new Ajv();
 const validate = ajv.compile(OUTPUT_SCHEMA);
 
-// Utility: extract first JSON object from possibly prosy assistant output
 function extractFirstJsonObject(text: string): any | null {
   const firstBrace = text.indexOf("{");
   const lastBrace = text.lastIndexOf("}");
@@ -125,18 +247,44 @@ async function callModel(messages: Array<{ role: string; content: string }>) {
     throw new Error(`Model API error: ${resp.status} ${txt}`);
   }
   const json = await resp.json();
-  // defensive: handle a few possible shapes
   const content = json?.choices?.[0]?.message?.content ?? json?.choices?.[0]?.text ?? "";
   return String(content);
 }
 
+// ============================================================================
+// MAIN HANDLER
+// ============================================================================
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  // Check request size
+  const contentLength = req.headers["content-length"];
+  if (contentLength && parseInt(contentLength) > MAX_REQUEST_SIZE) {
+    return res.status(413).json({ error: "Request too large" });
+  }
+
+  // Get client IP and check rate limit
+  const clientIP = getClientIP(req);
+  const rateLimitCheck = checkRateLimit(clientIP);
+
+  if (!rateLimitCheck.allowed) {
+    res.setHeader("Retry-After", rateLimitCheck.retryAfter?.toString() || "60");
+    return res.status(429).json({
+      error: "Rate limit exceeded",
+      retryAfter: rateLimitCheck.retryAfter
+    });
+  }
 
   try {
     const { message, mode } = req.body ?? {};
-    if (!message || typeof message !== "string") {
-      return res.status(400).json({ error: "Request must include `message` string in body" });
+
+    // Validate input
+    const inputValidation = validateInput(message, mode);
+    if (!inputValidation.valid) {
+      return res.status(400).json({ error: inputValidation.error });
     }
 
     // Build messages
@@ -151,29 +299,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const messages = [systemMessage, ...FEW_SHOT_EXAMPLES, userInstruction];
 
-    // Primary call
+    // Call model (ONLY ONCE - removed expensive fallback retry)
     const raw = await callModel(messages);
-
-    // Try to extract JSON
     let parsed = extractFirstJsonObject(raw);
 
-    // If not parsed, ask the model to extract JSON from its own output (fallback)
-    if (!parsed) {
-      const followup = [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content:
-            "Please extract and return only the JSON object from the following assistant output. If impossible, return an object with empty strings for each field.\n\nAssistant output:\n" +
-            raw
-        }
-      ];
-      const raw2 = await callModel(followup);
-      parsed = extractFirstJsonObject(raw2);
-    }
-
-    // Final fallback: safe empty object with default emotional_read
+    // If parsing fails, use safe fallback (NO SECOND API CALL to save costs)
     if (!parsed || typeof parsed !== "object") {
+      console.warn(`[${clientIP}] Failed to parse model output, using fallback`);
       parsed = {
         emotional_read: "frustration",
         validation: "",
@@ -203,8 +335,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Validate with AJV
     const ok = validate(coerced);
     if (!ok) {
-      // If invalid, return schema errors and the coerced object for debug (server log)
-      console.error("Schema validation errors:", validate.errors);
+      console.error(`[${clientIP}] Schema validation errors:`, validate.errors);
       return res.status(500).json({
         error: "Model produced output that failed schema validation",
         details: validate.errors,
@@ -212,9 +343,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
+    // Log successful request (for monitoring)
+    console.log(`[${clientIP}] Request processed successfully`);
+
     return res.status(200).json(coerced);
   } catch (err: any) {
-    console.error("packers-agent error:", err);
+    console.error(`[${clientIP}] packers-agent error:`, err);
     return res.status(500).json({ error: err?.message ?? "server error" });
   }
 }
