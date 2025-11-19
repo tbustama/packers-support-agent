@@ -108,7 +108,7 @@ export default function PackersAgentClient() {
             <h1 style={responsiveStyles.title}>Channel Your Green Bay Rage</h1>
             <p style={responsiveStyles.subtitle}>
               No more screaming at the TV! Drop your rant, pick the vibe, and let the Packers Agent return the perfect blend of validation,
-              humor, and tactics—custom-built for Cheeseheads.
+              humor, and tactics—custom-built for frustrated Cheeseheads.
             </p>
           </div>
           <div style={responsiveStyles.scoreboard}>
