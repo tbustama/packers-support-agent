@@ -58,7 +58,6 @@ export default function PackersAgentClient() {
   const responseEntries = useMemo(() => {
     if (!result) return [];
     const orderedKeys = [
-      "emotional_read",
       "validation",
       "tactical_breakdown",
       "reframing",
