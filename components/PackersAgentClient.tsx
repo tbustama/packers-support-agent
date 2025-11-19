@@ -1,5 +1,5 @@
 // components/PackersAgentClient.tsx
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 
 const packersPalette = {
   green: "#154734",
@@ -26,6 +26,8 @@ export default function PackersAgentClient() {
   const [result, setResult] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  const responseSectionRef = useRef<HTMLElement | null>(null);
+  const previousNarrativeResponseRef = useRef<string>("");
 
   useEffect(() => {
     const checkMobile = () => {
@@ -40,6 +42,8 @@ export default function PackersAgentClient() {
     setLoading(true);
     setError(null);
     setResult(null);
+    // Reset the previous response ref so we scroll to the new response
+    previousNarrativeResponseRef.current = "";
     try {
       const resp = await fetch("/api/packers-agent", {
         method: "POST",
@@ -61,7 +65,7 @@ export default function PackersAgentClient() {
 
   const playClockStatus = useMemo(() => {
     if (loading) return "Calling the play...";
-    if (!message.trim()) return "Waiting for the huddle";
+    if (!message.trim()) return "Waiting in the huddle";
     return "Ready to snap";
   }, [loading, message]);
 
@@ -95,6 +99,41 @@ export default function PackersAgentClient() {
       .filter(Boolean)
       .join("\n\n");
   }, [responseEntries]);
+
+  // Auto-scroll to response when it becomes available
+  useEffect(() => {
+    const previousResponse = previousNarrativeResponseRef.current;
+    const currentResponse = narrativeResponse;
+
+    // Only scroll if we're transitioning from empty to having content (new response)
+    if (!previousResponse && currentResponse && responseSectionRef.current) {
+      // Use double requestAnimationFrame to ensure DOM is fully updated and rendered
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (responseSectionRef.current) {
+            // Check if element is already visible in viewport
+            const rect = responseSectionRef.current.getBoundingClientRect();
+            const viewportHeight = window.innerHeight;
+            const isFullyVisible = rect.top >= 0 && rect.top < viewportHeight * 0.3;
+
+            // Always scroll to new response, but only if not already in upper third of viewport
+            // This ensures user sees the response without being too aggressive
+            if (!isFullyVisible) {
+              // Use smooth scrolling - scroll to start of element with some padding
+              responseSectionRef.current.scrollIntoView({
+                behavior: "smooth",
+                block: "start",
+                inline: "nearest"
+              });
+            }
+          }
+        });
+      });
+    }
+
+    // Update the ref for next comparison
+    previousNarrativeResponseRef.current = currentResponse;
+  }, [narrativeResponse]);
 
   const responsiveStyles = useMemo(() => getResponsiveStyles(isMobile), [isMobile]);
 
@@ -176,7 +215,10 @@ export default function PackersAgentClient() {
         </section>
 
         {narrativeResponse && (
-          <section style={{ ...responsiveStyles.card, marginTop: isMobile ? 20 : 24 }}>
+          <section 
+            ref={responseSectionRef}
+            style={{ ...responsiveStyles.card, marginTop: isMobile ? 20 : 24 }}
+          >
             <div style={responsiveStyles.outputHeader}>
               <div>
                 <p style={responsiveStyles.badge}>Agent Response</p>
