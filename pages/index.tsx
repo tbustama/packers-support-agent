@@ -11,25 +11,32 @@ interface HomeProps {
 }
 
 export default function Home({ baseUrl }: HomeProps) {
-  const imageUrl = `${baseUrl}/green-bay-packers-logo.svg`;
+  // Use PNG instead of SVG - SVG files are not supported for Open Graph previews
+  const imageUrl = `${baseUrl}/GB.png`;
 
   return (
     <>
       <Head>
-        <title>Packers Fan Companion - Channel That Lambeau Energy</title>
+        <title>Packers Emotional Support Agent</title>
+        <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192x192.png" />
+        <link rel="icon" type="image/png" sizes="512x512" href="/favicon-512x512.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
         <meta name="description" content="Drop your rant, pick the vibe, and let the Packers Agent return the perfect blend of validation, humor, and tactics—custom-built for Cheeseheads." />
         
         {/* Open Graph / Facebook */}
         <meta property="og:type" content="website" />
         <meta property="og:url" content={baseUrl} />
-        <meta property="og:title" content="Packers Fan Companion - Channel That Lambeau Energy" />
+        <meta property="og:title" content="Packers Emotional Support Agent" />
         <meta property="og:description" content="Drop your rant, pick the vibe, and let the Packers Agent return the perfect blend of validation, humor, and tactics—custom-built for Cheeseheads." />
         <meta property="og:image" content={imageUrl} />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta property="og:image:type" content="image/png" />
         
         {/* Twitter */}
         <meta name="twitter:card" content="summary_large_image" />
         <meta name="twitter:url" content={baseUrl} />
-        <meta name="twitter:title" content="Packers Fan Companion - Channel That Lambeau Energy" />
+        <meta name="twitter:title" content="Packers Emotional Support Agent" />
         <meta name="twitter:description" content="Drop your rant, pick the vibe, and let the Packers Agent return the perfect blend of validation, humor, and tactics—custom-built for Cheeseheads." />
         <meta name="twitter:image" content={imageUrl} />
       </Head>

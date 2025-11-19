@@ -92,7 +92,7 @@ export default function PackersAgentClient() {
       <main style={styles.shell}>
         <section style={styles.hero}>
           <div>
-            <p style={styles.badge}>Packers Fan Companion</p>
+            <p style={styles.badge}>Packers Emotional Support</p>
             <h1 style={styles.title}>Channel That Lambeau Energy</h1>
             <p style={styles.subtitle}>
               Drop your rant, pick the vibe, and let the Packers Agent return the perfect blend of validation,
